@@ -2,17 +2,32 @@ import pandas as pd
 from datetime import time, datetime, timedelta
 
 # Load the Excel file
-file_path = 'AA_IOT.xlsx'  # Change this to the path of your Excel file
+file_path = 'BB_IOT.xlsx'  # Ganti dengan path file Excel Anda
 df = pd.read_excel(file_path)
 
-# Define the time range to check availability (7 AM to 2 PM)
-start_time = pd.to_datetime('07:00', format='%H:%M').time()
-end_time = pd.to_datetime('14:00', format='%H:%M').time()
+# Pengaturan
+START_TIME = time(8, 0)  # Waktu mulai kelas
+END_TIME = time(16, 50)  # Waktu akhir kelas
+MAX_CONFLICTS = 5  # Maksimum konflik
+DURATION = timedelta(hours=2, minutes=50)  # Durasi kelas
+INTERVAL_MINUTES = 20  # Interval pencarian dalam menit
 
-# Time slots in 30-minute intervals
-time_slots = [time(h, m) for h in range(7, 15) for m in (0, 30)]
+# Menyiapkan slot waktu
+def generate_time_slots(start, end, interval):
+    slots = []
+    current_time = datetime.combine(datetime.today(), start)
+    end_time = datetime.combine(datetime.today(), end)
+    
+    while current_time <= end_time:
+        slots.append(current_time.time())
+        current_time += timedelta(minutes=interval)
+    
+    return slots
 
-# Initialize the dictionary to store busy status and student names for each time slot for each day
+# Membuat daftar slot waktu
+time_slots = generate_time_slots(START_TIME, END_TIME, INTERVAL_MINUTES)
+
+# Inisialisasi dictionary untuk mencatat ketersediaan
 availability = {
     'SENIN': {slot: {'count': 0, 'students': []} for slot in time_slots},
     'SELASA': {slot: {'count': 0, 'students': []} for slot in time_slots},
@@ -22,31 +37,22 @@ availability = {
     'SABTU': {slot: {'count': 0, 'students': []} for slot in time_slots},
 }
 
-# Maximum allowed conflict
-MAX_CONFLICTS = 5
-
-# Function to mark time slots as busy and track student names
+# Fungsi untuk menandai slot waktu yang sibuk
 def mark_busy_slots(student_name, day, start_str, end_str):
     start_time_class = pd.to_datetime(start_str, format='%H:%M').time()
     end_time_class = pd.to_datetime(end_str, format='%H:%M').time()
     
     for slot in time_slots:
-        # If the slot falls within the class time, mark it as busy and add the student name
+        # Jika slot berada dalam rentang waktu kelas, tandai sebagai sibuk
         if start_time_class <= slot < end_time_class:
             availability[day][slot]['count'] += 1
             availability[day][slot]['students'].append(student_name)
 
-# Process the schedule data for all students
+# Proses data jadwal untuk semua mahasiswa
 for index, row in df.iterrows():
     mark_busy_slots(row['NIM'], row['Disp_Hari'], row['Disp_Jam'].split(' - ')[0], row['Disp_Jam'].split(' - ')[1])
 
-# Function to add 30 minutes to a given time slot
-def add_30_minutes(slot):
-    slot_time = datetime.combine(datetime.today(), slot)
-    slot_time_plus_30 = slot_time + timedelta(minutes=30)
-    return slot_time_plus_30.time()
-
-# Function to find free time slots (at least 2 hours 50 minutes, up to 5 conflicts allowed)
+# Fungsi untuk mencari slot kosong
 def find_common_free_slots():
     free_slots = {}
 
@@ -61,35 +67,40 @@ def find_common_free_slots():
 
             if slot_data['count'] <= MAX_CONFLICTS:
                 temp_free.append(slot)
-                # Check if we have at least 5 consecutive free slots (i.e. 2 hours 50 minutes)
-                if len(temp_free) >= 5:
-                    # Add the start and end time for the free block along with conflicting students' names
+                
+                # Cek jika kita sudah mendapatkan cukup slot untuk 2 jam 50 menit
+                if len(temp_free) * (INTERVAL_MINUTES / 60) >= 2.83:  # 2 jam 50 menit dalam jam
                     conflicting_students = []
                     for t in temp_free:
                         conflicting_students += slots[t]['students']
-                    conflicting_students = list(set(conflicting_students))  # Remove duplicates
-                    free_slots[day].append((temp_free[0], temp_free[-1], conflicting_students))  # Start, end, and conflicts
+                    conflicting_students = list(set(conflicting_students))  # Hapus duplikat
                     
-                    # Skip over the remaining slots in this 2-hour 50-minute period
-                    i += len(temp_free) - 1  # Move past this block
-                    temp_free = []  # Reset temp_free after collecting a block
+                    # Batasi jumlah mahasiswa konflik hingga MAX_CONFLICTS
+                    conflicting_students = conflicting_students[:MAX_CONFLICTS]
+                    
+                    # Tambahkan informasi slot kosong
+                    free_slots[day].append((temp_free[0], temp_free[-1], conflicting_students))
+                    
+                    # Lewati sisa slot dalam periode ini
+                    i += len(temp_free) - 1
+                    temp_free = []
             else:
-                temp_free = []  # Reset when the slot is busy
+                temp_free = []
 
-            i += 1  # Move to the next slot
+            i += 1  # Lanjut ke slot berikutnya
 
     return free_slots
 
-# Get the common free slots for all students
+# Dapatkan slot kosong untuk semua mahasiswa
 common_free_slots = find_common_free_slots()
 
-# Display the free time slots and conflicting students below each free slot group
+# Tampilkan slot kosong dan mahasiswa yang konflik
 for day, slots in common_free_slots.items():
-    print(f"Free slots on {day}:")
-    for start_slot, end_slot, students in slots:
-        end_time_slot = add_30_minutes(end_slot)  # Calculate the end time
+    print(f"Slot kosong pada {day}:")
+    for start_slot, end_slot, students_conflict in slots:
+        end_time_slot = (datetime.combine(datetime.today(), start_slot) + DURATION).time()  # Hitung waktu akhir
         print(f"  {start_slot.strftime('%H:%M')} - {end_time_slot.strftime('%H:%M')}")
-        if students:
-            print(f"    Conflicts with:")
-            for student in students:
-                print(f"      - {student}")  # Print each conflicting student on a new line
+        if students_conflict:
+            print(f"    Mahasiswa konflik (maksimal {MAX_CONFLICTS}):")
+            for student in students_conflict:
+                print(f"      - {student}")  # Cetak setiap mahasiswa konflik di baris baru
